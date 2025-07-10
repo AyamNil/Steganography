@@ -10,7 +10,7 @@ def detect_lsb(image_path):
             img = img.convert('RGB')
         arr = np.array(img)
         flat = arr.flatten()
-        # Check the first 32 bits for a plausible data length
+        # Check the first 32 bits for a probable data length
         len_bits = flat[:32] & 1
         data_len = int(''.join(str(b) for b in len_bits), 2)
         if 0 < data_len < len(flat) - 32:

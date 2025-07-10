@@ -1,13 +1,15 @@
 """
-LSB (Least Significant Bit) Steganography Implementation in Python
+LSB (Least Significant Bit) Steganography with Pseudo-Random Embedding
 - Embeds and extracts data in the least significant bits of image pixels
+- Uses a key to shuffle embedding order for increased security
 - Works with PNG and BMP (lossless) images
 """
 from PIL import Image
 import numpy as np
 import sys
+import os
 
-class LSBSteganography:
+class LSBStegoPRNG:
     @staticmethod
     def _to_bits(data):
         return [int(bit) for byte in data for bit in f'{byte:08b}']
@@ -23,75 +25,88 @@ class LSBSteganography:
         return bytes(bytes_out)
 
     @staticmethod
-    def embed(input_image, data, output_image):
+    def embed(input_image, data, output_image, key):
         img = Image.open(input_image)
         if img.mode != 'RGB':
             img = img.convert('RGB')
         arr = np.array(img)
         flat = arr.flatten()
-        data_bits = LSBSteganography._to_bits(data)
+        data_bits = LSBStegoPRNG._to_bits(data)
         data_len = len(data_bits)
-        # Store data length in first 32 bits
         len_bits = [int(b) for b in f'{data_len:032b}']
         bits = len_bits + data_bits
         if len(bits) > len(flat):
             raise ValueError('Data too large to embed in image.')
+        # Pseudo-random embedding order
+        indices = list(range(len(flat)))
+        import random, hashlib
+        seed = int(hashlib.sha256(key.encode()).hexdigest(), 16) % (2**32)
+        rng = random.Random(seed)
+        rng.shuffle(indices)
         for i, bit in enumerate(bits):
-            flat[i] = (flat[i] & 0xFE) | bit
+            idx = indices[i]
+            flat[idx] = (flat[idx] & 0xFE) | bit
         arr = flat.reshape(arr.shape)
         out_img = Image.fromarray(arr)
         out_img.save(output_image)
         print(f"Embedded {data_len} bits into {output_image}")
 
     @staticmethod
-    def extract(stego_image):
+    def extract(stego_image, key):
         img = Image.open(stego_image)
         if img.mode != 'RGB':
             img = img.convert('RGB')
         arr = np.array(img)
         flat = arr.flatten()
-        # Read data length from first 32 bits
-        len_bits = flat[:32] & 1
+        indices = list(range(len(flat)))
+        import random, hashlib
+        seed = int(hashlib.sha256(key.encode()).hexdigest(), 16) % (2**32)
+        rng = random.Random(seed)
+        rng.shuffle(indices)
+        len_bits = []
+        for i in range(32):
+            idx = indices[i]
+            len_bits.append(flat[idx] & 1)
         data_len = int(''.join(str(b) for b in len_bits), 2)
-        data_bits = flat[32:32+data_len] & 1
-        data = LSBSteganography._from_bits(data_bits)
+        data_bits = []
+        for i in range(32, 32+data_len):
+            idx = indices[i]
+            data_bits.append(flat[idx] & 1)
+        data = LSBStegoPRNG._from_bits(data_bits)
         return data
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: python lsb_stego.py <embed|extract> <input_image> <output_image|output_file> [data_file]")
+    if len(sys.argv) < 6:
+        print("Usage: python lsb_stego_prng.py <embed|extract> <input_image> <output_image|output_file> <data_file|key> <key>")
+        print("  For embed: python lsb_stego_prng.py embed input.png output.png secret.pdf mySecretKey")
+        print("  For extract: python lsb_stego_prng.py extract output.png extracted.pdf mySecretKey")
         sys.exit(1)
     mode = sys.argv[1]
-    import os
-    output_dir = "LSB_Outputs"
+    output_dir = "PRNG_Outputs"
     os.makedirs(output_dir, exist_ok=True)
     if mode == "embed":
-        if len(sys.argv) < 5:
-            print("Provide a file to embed.")
-            sys.exit(1)
         input_image = sys.argv[2]
         output_image = sys.argv[3]
-        # Ensure output is in LSB_Outputs directory
         if not output_image.startswith(output_dir + os.sep):
             output_image = os.path.join(output_dir, os.path.basename(output_image))
         file_to_embed = sys.argv[4]
+        key = sys.argv[5]
         with open(file_to_embed, "rb") as f:
             data = f.read()
         if file_to_embed.lower().endswith('.pdf'):
             print(f"Embedding PDF file '{file_to_embed}' into image '{output_image}'...")
         else:
             print(f"Embedding file '{file_to_embed}' into image '{output_image}'...")
-        LSBSteganography.embed(input_image, data, output_image)
+        LSBStegoPRNG.embed(input_image, data, output_image, key)
         if file_to_embed.lower().endswith('.pdf'):
-            print("To extract the PDF, use: python lsb_stego.py extract <stego_image> <output.pdf>")
+            print("To extract the PDF, use: python lsb_stego_prng.py extract <stego_image> <output.pdf> <key>")
     elif mode == "extract":
         input_image = sys.argv[2]
         output_file = sys.argv[3]
-        # Ensure output is in LSB_Outputs directory
+        key = sys.argv[4]
         if not output_file.startswith(output_dir + os.sep):
             output_file = os.path.join(output_dir, os.path.basename(output_file))
-        data = LSBSteganography.extract(input_image)
-        # If output file ends with .txt, decode as text
+        data = LSBStegoPRNG.extract(input_image, key)
         if output_file.lower().endswith('.txt'):
             try:
                 text = data.decode('utf-8')
